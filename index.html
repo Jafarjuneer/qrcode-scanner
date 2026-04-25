@@ -1801,6 +1801,13 @@ select:focus {
         renderCard(targetId, scan);
         toast('✓ Extracted ' + Object.keys(fields).length + ' fields from ' + name);
 
+        // Save to Firestore (cloud)
+        saveScanToFirestore(scan);
+        // Check cloud duplicate (background)
+        checkFirestoreDuplicate(scan).then(isDup => {
+          if (isDup) toast("⚠️ Duplicate found in cloud history.", true);
+        });
+
         // Refresh history table if visible
         if (document.getElementById('p-hist').classList.contains('on')) {
             applyFilters();
@@ -2029,20 +2036,24 @@ select:focus {
         }).join('');
     }
 
-    function delScan(e, id) {
-        e.stopPropagation();
-        const i = scans.findIndex(s => s.id === id);
-        if (i >= 0) {
-            const name = scans[i].sellerName || 'invoice';
-            if (confirm('Delete "' + name + '" from history?\nThis action cannot be undone.')) {
-                scans.splice(i, 1);
-                save();
-                updateBadge();
-                applyFilters();
-                toast('🗑 Deleted from history');
-            }
+async function delScan(e, id) {
+    e.stopPropagation();
+    const i = scans.findIndex(s => s.id === id);
+    if (i >= 0) {
+        const name = scans[i].sellerName || 'invoice';
+        if (confirm('Delete "' + name + '" from history?\nThis action cannot be undone.')) {
+            scans.splice(i, 1);
+            save();
+            updateBadge();
+            applyFilters();
+            // Delete from Firestore
+            try {
+                await db.collection("invoices").doc(String(id)).delete();
+            } catch(e) { toast("⚠️ Cloud delete failed.", true); }
+            toast('🗑 Deleted from history');
         }
     }
+}
 
     function doClr() {
         if (!scans.length) return;
@@ -2246,11 +2257,19 @@ toast('⚠️ Pop-up blocked. Please allow pop-ups for PDF export.', true);
 
 // ============ INIT ============
 function initAll() {
-updateBadge();
-listCams();
-// Render history table on load
-renderTable();
-toast('Eman Bakery ZATCA Scanner ready — Enhanced history & deep scanning enabled');
+  updateBadge();
+  listCams();
+  renderTable();
+
+  // Wait for auth, then load cloud history
+  auth.onAuthStateChanged(user => {
+    if (user) {
+      console.log("☁️ Signed in, loading cloud history...");
+      loadHistoryFromFirestore();
+    }
+  });
+
+  toast("Eman Bakery ZATCA Scanner ready — cloud sync enabled");
 }
 
 // Load jsQR fallback
@@ -2260,6 +2279,90 @@ document.head.appendChild(jsQRScript);
 
 // Initialize
 initAll();
+</script>
+
+<!-- Firebase SDK (compat) -->
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+
+<script>
+// ========== FIREBASE INIT ==========
+firebase.initializeApp({
+  apiKey: "AIzaSyCiBx4saH4jZfSXHGU3mL1hOTU35Ej7N8w",
+  authDomain: "emanbakeryscanner-b3d10.firebaseapp.com",
+  projectId: "emanbakeryscanner-b3d10",
+  storageBucket: "emanbakeryscanner-b3d10.firebasestorage.app",
+  messagingSenderId: "271125085891",
+  appId: "1:271125085891:web:dbb679dc41bf5314e5ec76"
+});
+const db = firebase.firestore();
+const auth = firebase.auth();
+
+auth.signInAnonymously().catch(err => console.error("Auth error:", err));
+
+// ========== CLOUD HELPERS ==========
+async function saveScanToFirestore(scanData) {
+  if (!auth.currentUser) return false;
+  try {
+    await db.collection("invoices").doc(String(scanData.id)).set({
+      ...scanData,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      uid: auth.currentUser.uid
+    });
+    return true;
+  } catch(e) {
+    console.error("Cloud save error:", e);
+    return false;
+  }
+}
+
+async function checkFirestoreDuplicate(scanData) {
+  try {
+    if (scanData.invoiceHash && scanData.invoiceHash.length > 10) {
+      const snap = await db.collection("invoices")
+        .where("invoiceHash", "==", scanData.invoiceHash).limit(1).get();
+      if (!snap.empty) return true;
+    }
+    if (scanData.sellerName && scanData.date && scanData.total) {
+      const snap = await db.collection("invoices")
+        .where("sellerName", "==", scanData.sellerName)
+        .where("date", "==", scanData.date)
+        .where("total", "==", scanData.total).limit(1).get();
+      if (!snap.empty) return true;
+    }
+    return false;
+  } catch(e) { return false; }
+}
+
+async function loadHistoryFromFirestore() {
+  try {
+    const snap = await db.collection("invoices")
+      .orderBy("createdAt", "desc").limit(500).get();
+    const cloud = [];
+    snap.forEach(doc => {
+      const d = doc.data();
+      cloud.push({
+        id: d.id, raw: d.raw, type: d.type, name: d.name, fields: d.fields,
+        ts: d.ts, sellerName: d.sellerName, vatNo: d.vatNo, total: d.total,
+        vatAmt: d.vatAmt, amountBeforeTax: d.amountBeforeTax,
+        invoiceNumber: d.invoiceNumber, invoiceHash: d.invoiceHash,
+        date: d.date, phase: d.phase
+      });
+    });
+    const merged = new Map();
+    cloud.forEach(s => merged.set(s.id, s));
+    scans.forEach(s => merged.set(s.id, s));
+    scans.length = 0;
+    merged.forEach(s => scans.push(s));
+    scans.sort((a,b) => new Date(b.ts) - new Date(a.ts));
+    save();
+    updateBadge();
+    renderTable();
+  } catch(e) {
+    console.error("Cloud load error:", e);
+  }
+}
 </script>
 </body>
 </html>
