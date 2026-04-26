@@ -92,15 +92,22 @@ body {
     margin-top: 1px;
 }
 
-.hdr-badge {
+.hdr-view-btn {
     font-family: var(--mono);
     font-size: 10px;
     letter-spacing: .8px;
-    padding: 4px 10px;
+    padding: 6px 12px;
     border-radius: 20px;
+    appearance: none;
+    cursor: pointer;
     background: rgba(16, 185, 129, .1);
     border: 1px solid rgba(16, 185, 129, .3);
     color: var(--green);
+    transition: .18s;
+}
+
+.hdr-view-btn:hover {
+    background: rgba(16, 185, 129, .2);
 }
 
 /* Tabs */
@@ -1094,7 +1101,7 @@ select:focus {
                 <div class="hdr-sub">Eman Bakery — Invoice QR Extractor</div>
             </div>
         </div>
-        <span class="hdr-badge" id="scan-badge">0 scans</span>
+        <button class="hdr-view-btn" id="view-data-btn" type="button" onclick="openViewData()">View Data</button>
     </div>
 
     <!-- Tabs -->
@@ -1276,6 +1283,7 @@ select:focus {
     let filterTimeout = null;
     let activeFilters = {}; // current filter state
     const webAppUrl = 'https://script.google.com/macros/s/AKfycbz3EwmM9oX3gjgmLl5CwkKOuAfxTIT3BwtcfMV-MN87mcAAttkQlF4Zy3cM35KXQnQLsQ/exec';
+    const viewDataUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSOx-7yyVc0s5mWv8DqzYvQ90Ob8xBehcJ9SRe5n7o60YF08emx43wlBAeXOmSBDtnBxgV16OO0zUus/pubhtml';
 
     async function syncToGoogleSheet(invoiceData) {
         try {
@@ -1291,6 +1299,12 @@ select:focus {
         } catch (error) {
             console.error('Error syncing to Google Sheets:', error);
         }
+    }
+
+    function openViewData() {
+        const mobileUrl = viewDataUrl + '?single=true&widget=true&headers=false';
+        const targetUrl = window.matchMedia('(max-width: 768px)').matches ? mobileUrl : viewDataUrl;
+        window.open(targetUrl, '_blank', 'noopener,noreferrer');
     }
 
     // ============ TABS ============
@@ -1649,10 +1663,7 @@ select:focus {
 
     function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(scans)); }
 
-    function updateBadge() {
-        document.getElementById('scan-badge').textContent = scans.length + ' scan' + (scans.length !== 1 ? 's' :
-            '');
-    }
+    function updateBadge() {}
 
     function showErr(id, m) { const e = document.getElementById(id);
         e.textContent = m;
